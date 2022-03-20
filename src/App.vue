@@ -19,12 +19,10 @@
                 placeholder="Например DOGE"
               />
             </div>
-            <!-- <div class="text-sm text-red-600">Такой тикер уже добавлен</div> -->
           </div>
         </div>
         <button
           @click="add"
-          :disabled="!ticker.length"
           type="button"
           class="my-4 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
         >
@@ -49,32 +47,30 @@
         <hr class="w-full border-t border-gray-600 my-4" />
         <div>
           <button
-            @click="page--"
-            v-if="page > 1"
             class="my-4 mx-2 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+            v-if="page > 1"
+            @click="page = page - 1"
           >
-            &laquo; Previous
+            Назад
           </button>
           <button
-            v-if="hasNextPage"
-            @click="page++"
             class="my-4 mx-2 inline-flex items-center py-2 px-4 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-full text-white bg-gray-600 hover:bg-gray-700 transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+            @click="page = page + 1"
+            v-if="hasNextPage"
           >
-            Next &raquo;
+            Вперед
           </button>
-          <div>
-            Фильтр: <input type="text" v-model="filter" /> All:
-            {{ tickers.length }}
-          </div>
+          <div>Фильтр: <input v-model="filter" /></div>
         </div>
-        <div>{{ page }}</div>
         <hr class="w-full border-t border-gray-600 my-4" />
         <dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
           <div
             v-for="t in paginatedTickers"
-            @click="selectTicker(t)"
             :key="t.name"
-            :class="{ 'border-4': selectedTicker === t }"
+            @click="select(t)"
+            :class="{
+              'border-4': selectedTicker === t,
+            }"
             class="bg-white overflow-hidden shadow rounded-lg border-purple-800 border-solid cursor-pointer"
           >
             <div class="px-4 py-5 sm:p-6 text-center">
@@ -87,7 +83,7 @@
             </div>
             <div class="w-full border-t border-gray-200"></div>
             <button
-              @click.stop="deleteTicker(t)"
+              @click.stop="handleDelete(t)"
               class="flex items-center justify-center font-medium w-full bg-gray-100 px-4 py-4 sm:px-6 text-md text-gray-500 hover:text-gray-600 hover:bg-gray-200 hover:opacity-20 transition-all focus:outline-none"
             >
               <svg
@@ -108,15 +104,17 @@
         </dl>
         <hr class="w-full border-t border-gray-600 my-4" />
       </template>
-
       <section v-if="selectedTicker" class="relative">
         <h3 class="text-lg leading-6 font-medium text-gray-900 my-8">
           {{ selectedTicker.name }} - USD
         </h3>
-        <div class="flex items-end border-gray-600 border-b border-l h-64">
+        <div
+          class="flex items-end border-gray-600 border-b border-l h-64"
+          ref="graph"
+        >
           <div
-            v-for="(bar, index) in graphNormilized"
-            :key="index"
+            v-for="(bar, idx) in normalizedGraph"
+            :key="idx"
             :style="{ height: `${bar}%` }"
             class="bg-purple-800 border w-10"
           ></div>
@@ -154,7 +152,24 @@
 </template>
 
 <script>
-import { subscribeToTicker, unsSbscribeFromTicker } from "./api";
+// H - homework - домашнее задание
+
+// [x] 6. Наличие в состоянии ЗАВИСИМЫХ ДАННЫХ | Критичность: 5+
+// [x] 4. Запросы напрямую внутри компонента (???) | Критичность: 5
+// [x] 2. При удалении остается подписка на загрузку тикера | Критичность: 5
+// [H] 5. Обработка ошибок API | Критичность: 5
+// [х] 3. Количество запросов | Критичность: 4
+// [x] 8. При удалении тикера не изменяется localStorage | Критичность: 4
+// [x] 1. Одинаковый код в watch | Критичность: 3
+// [ ] 9. localStorage и анонимные вкладки | Критичность: 3
+// [x] 7. График ужасно выглядит если будет много цен | Критичность: 2
+// [ ] 10. Магические строки и числа (URL, 5000 миллисекунд задержки, ключ локал стораджа, количество на странице) |  Критичность: 1
+
+// Параллельно
+// [x] График сломан если везде одинаковые значения
+// [x] При удалении тикера остается выбор
+
+import { subscribeToTicker, unsubscribeFromTicker } from "./api";
 
 export default {
   name: "App",
@@ -163,21 +178,39 @@ export default {
     return {
       ticker: "",
       filter: "",
+
       tickers: [],
       selectedTicker: null,
+
       graph: [],
+      maxGraphElements: 1,
+
       page: 1,
     };
   },
+
   created() {
     const windowData = Object.fromEntries(
       new URL(window.location).searchParams.entries(),
     );
 
-    this.filter = windowData.filter ? windowData.filter : "";
-    this.page = windowData.page ? windowData.page : 1;
+    const VALID_KEYS = ["filter", "page"];
 
-    const tickersData = localStorage.getItem("crypto-list");
+    VALID_KEYS.forEach((key) => {
+      if (windowData[key]) {
+        this[key] = windowData[key];
+      }
+    });
+
+    // if (windowData.filter) {
+    //   this.filter = windowData.filter;
+    // }
+
+    // if (windowData.page) {
+    //   this.page = windowData.page;
+    // }
+
+    const tickersData = localStorage.getItem("cryptonomicon-list");
 
     if (tickersData) {
       this.tickers = JSON.parse(tickersData);
@@ -188,36 +221,51 @@ export default {
       });
     }
 
-    setInterval(this.updateTickers, 3000);
+    setInterval(this.updateTickers, 5000);
   },
+
+  mounted() {
+    window.addEventListener("resize", this.calculateMaxGraphElements);
+  },
+
+  beforeUnmount() {
+    window.removeEventListener("resize", this.calculateMaxGraphElements);
+  },
+
   computed: {
     startIndex() {
       return (this.page - 1) * 6;
     },
+
     endIndex() {
       return this.page * 6;
     },
+
     filteredTickers() {
-      return this.tickers.filter((ticker) =>
-        ticker.name.includes(this.filter.toUpperCase()),
-      );
+      return this.tickers.filter((ticker) => ticker.name.includes(this.filter));
     },
+
     paginatedTickers() {
       return this.filteredTickers.slice(this.startIndex, this.endIndex);
     },
+
     hasNextPage() {
       return this.filteredTickers.length > this.endIndex;
     },
-    graphNormilized() {
-      const max = Math.max(...this.graph);
-      const min = Math.min(...this.graph);
 
-      if (max === min) {
+    normalizedGraph() {
+      const maxValue = Math.max(...this.graph);
+      const minValue = Math.min(...this.graph);
+
+      if (maxValue === minValue) {
         return this.graph.map(() => 50);
       }
 
-      return this.graph.map((price) => 5 + ((price - min) * 95) / (max - min));
+      return this.graph.map(
+        (price) => 5 + ((price - minValue) * 95) / (maxValue - minValue),
+      );
     },
+
     pageStateOptions() {
       return {
         filter: this.filter,
@@ -225,13 +273,25 @@ export default {
       };
     },
   },
+
   methods: {
+    calculateMaxGraphElements() {
+      if (!this.$refs.graph) {
+        return;
+      }
+
+      this.maxGraphElements = this.$refs.graph.clientWidth / 38;
+    },
+
     updateTicker(tickerName, price) {
       this.tickers
         .filter((t) => t.name === tickerName)
         .forEach((t) => {
           if (t === this.selectedTicker) {
             this.graph.push(price);
+            while (this.graph.length > this.maxGraphElements) {
+              this.graph.shift();
+            }
           }
           t.price = price;
         });
@@ -243,38 +303,31 @@ export default {
       }
       return price > 1 ? price.toFixed(2) : price.toPrecision(2);
     },
-    // async updateTickers() {
-    //   if (!this.tickers.length) return;
-    //   const exchangeData = await loadTickers(
-    //     this.tickers.map((t) => t.name.toUpperCase()),
-    //   );
-    //   this.tickers.forEach((ticker) => {
-    //     const price = exchangeData[ticker.name.toUpperCase()];
-    //     ticker.price = price ?? "-";
-    //   });
-    // },
+
     add() {
       const currentTicker = {
-        name: this.ticker.toUpperCase(),
+        name: this.ticker,
         price: "-",
       };
+
       this.tickers = [...this.tickers, currentTicker];
+      this.ticker = "";
+      this.filter = "";
       subscribeToTicker(currentTicker.name, (newPrice) =>
         this.updateTicker(currentTicker.name, newPrice),
       );
-      this.ticker = "";
-      this.filter = "";
     },
-    deleteTicker(tickerToDelete) {
-      this.graph = [];
-      if (this.selectedTicker == tickerToDelete) {
+
+    select(ticker) {
+      this.selectedTicker = ticker;
+    },
+
+    handleDelete(tickerToRemove) {
+      this.tickers = this.tickers.filter((t) => t !== tickerToRemove);
+      if (this.selectedTicker === tickerToRemove) {
         this.selectedTicker = null;
       }
-      this.tickers = this.tickers.filter((t) => t !== tickerToDelete);
-      unsSbscribeFromTicker(tickerToDelete.name);
-    },
-    selectTicker(ticker) {
-      this.selectedTicker = ticker;
+      unsubscribeFromTicker(tickerToRemove.name);
     },
   },
 
@@ -282,22 +335,28 @@ export default {
     selectedTicker() {
       this.graph = [];
     },
-    tickers() {
-      localStorage.setItem("crypto-list", JSON.stringify(this.tickers));
+
+    tickers(newValue, oldValue) {
+      // Почему не сработал watch при добавлении?
+      console.log(newValue === oldValue);
+      localStorage.setItem("cryptonomicon-list", JSON.stringify(this.tickers));
     },
+
     paginatedTickers() {
       if (this.paginatedTickers.length === 0 && this.page > 1) {
         this.page -= 1;
       }
     },
+
     filter() {
       this.page = 1;
     },
-    pageStateOptions(newValue) {
-      history.pushState(
+
+    pageStateOptions(value) {
+      window.history.pushState(
         null,
         document.title,
-        `${window.location.pathname}?filter=${newValue.filter}&page=${newValue.page}`,
+        `${window.location.pathname}?filter=${value.filter}&page=${value.page}`,
       );
     },
   },
